@@ -14,18 +14,16 @@ from telethon import TelegramClient
 # =================================
 # ENV
 # =================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-ADMIN_IDS = os.getenv("ADMIN_IDS", "")
-if ADMIN_IDS:
-    ADMIN_IDS = list(map(int, ADMIN_IDS.split(",")))
-else:
-    ADMIN_IDS = []
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 # =================================
-# FILES & SESSIONS
+# FILES
 # =================================
+
 DATA_FILE = "data.json"
 SESSIONS_DIR = "sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
@@ -33,21 +31,23 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 # =================================
 # DATABASE
 # =================================
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+    return json.load(open(DATA_FILE))
+
 
 def save_data(d):
-    with open(DATA_FILE, "w") as f:
-        json.dump(d, f, indent=2)
+    json.dump(d, open(DATA_FILE, "w"), indent=2)
+
 
 db = load_data()
 
 # =================================
 # KEYBOARD
 # =================================
+
 def keyboard():
     return ReplyKeyboardMarkup(
         [
@@ -64,6 +64,7 @@ def keyboard():
 # =================================
 # HELPERS
 # =================================
+
 def get_user(uid):
     uid = str(uid)
     if uid not in db:
@@ -83,10 +84,12 @@ async def get_client(uid):
 # =================================
 # ADS LOOP
 # =================================
+
 async def ads_loop(uid):
     user = get_user(uid)
     client = await get_client(uid)
     await client.connect()
+
     while user["running"]:
         try:
             for chat in user["chats"]:
@@ -94,20 +97,23 @@ async def ads_loop(uid):
             await asyncio.sleep(user["interval"])
         except:
             await asyncio.sleep(5)
+
     await client.disconnect()
 
 # =================================
 # START
 # =================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🚀 AdBot Ready",
+        "🚀 AdBot is Ready!",
         reply_markup=keyboard(),
     )
 
 # =================================
-# TEXT HANDLER
+# MAIN TEXT HANDLER
 # =================================
+
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
     uid = update.message.from_user.id
@@ -129,12 +135,12 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.send_code_request(msg)
         user["state"] = "otp"
         save_data(db)
-        await update.message.reply_text("Send OTP like:\ncode12345")
+        await update.message.reply_text("Send OTP like: code12345")
         return
 
     if user["state"] == "otp":
         if not msg.startswith("code"):
-            await update.message.reply_text("Format must be: code12345")
+            await update.message.reply_text("OTP format must be: code12345")
             return
         code = msg[4:]
         client = await get_client(uid)
@@ -148,9 +154,9 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # LOGOUT
     # =========================
     if msg == "🚪 Logout":
-        session_file = f"{SESSIONS_DIR}/{uid}.session"
-        if os.path.exists(session_file):
-            os.remove(session_file)
+        session = f"{SESSIONS_DIR}/{uid}.session"
+        if os.path.exists(session):
+            os.remove(session)
         await update.message.reply_text("Logged out")
         return
 
@@ -161,6 +167,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["state"] = "set_message"
         await update.message.reply_text("Send your ad message text")
         return
+
     if user["state"] == "set_message":
         user["message"] = msg
         user["state"] = None
@@ -175,25 +182,29 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["state"] = "add_chat"
         await update.message.reply_text("Send chat id or username")
         return
+
     if msg == "➖ Remove Chat":
         user["state"] = "remove_chat"
         await update.message.reply_text("Send chat id to remove")
         return
+
     if msg == "📋 List Chats":
         await update.message.reply_text(str(user["chats"]))
         return
+
     if user["state"] == "add_chat":
         user["chats"].append(msg)
         user["state"] = None
         save_data(db)
-        await update.message.reply_text("Chat added")
+        await update.message.reply_text("✅ Chat added")
         return
+
     if user["state"] == "remove_chat":
         if msg in user["chats"]:
             user["chats"].remove(msg)
         user["state"] = None
         save_data(db)
-        await update.message.reply_text("Chat removed")
+        await update.message.reply_text("✅ Chat removed")
         return
 
     # =========================
@@ -203,11 +214,12 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["state"] = "interval"
         await update.message.reply_text("Send seconds")
         return
+
     if user["state"] == "interval":
         user["interval"] = int(msg)
         user["state"] = None
         save_data(db)
-        await update.message.reply_text("Interval updated")
+        await update.message.reply_text("✅ Interval updated")
         return
 
     # =========================
@@ -220,12 +232,13 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["running"] = True
         save_data(db)
         context.application.create_task(ads_loop(uid))
-        await update.message.reply_text("Ads started")
+        await update.message.reply_text("✅ Ads started")
         return
+
     if msg == "⏹ Stop Ads":
         user["running"] = False
         save_data(db)
-        await update.message.reply_text("Ads stopped")
+        await update.message.reply_text("✅ Ads stopped")
         return
 
     # =========================
@@ -242,12 +255,15 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =================================
 # MAIN
 # =================================
+
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, text))
-    print("🚀 AdBot running")
+
+    print("🚀 AdBot running smoothly")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
