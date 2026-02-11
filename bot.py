@@ -11,39 +11,47 @@ from telegram.ext import (
 )
 from telethon import TelegramClient, errors
 
-# =========================
+# ================================
 # ENV VARIABLES
-# =========================
+# ================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_ID = int(os.getenv("API_ID"))
+API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
+ADMIN_IDS = os.getenv("ADMIN_IDS", "")
 
-# =========================
-# FILES
-# =========================
+if not BOT_TOKEN or not API_ID or not API_HASH:
+    raise Exception("❌ Please set BOT_TOKEN, API_ID, and API_HASH in your environment variables")
+
+try:
+    API_ID = int(API_ID)
+except:
+    raise Exception("❌ API_ID must be an integer")
+
+ADMIN_IDS = [int(x) for x in ADMIN_IDS.split(",") if x.strip().isdigit()]
+
+# ================================
+# FILES AND DIRECTORIES
+# ================================
 DATA_FILE = "data.json"
 SESSIONS_DIR = "sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
-# =========================
+# ================================
 # DATABASE
-# =========================
+# ================================
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
     return json.load(open(DATA_FILE))
 
-
 def save_data(d):
     json.dump(d, open(DATA_FILE, "w"), indent=2)
 
-
 db = load_data()
 
-# =========================
+# ================================
 # KEYBOARD
-# =========================
+# ================================
 def keyboard():
     return ReplyKeyboardMarkup(
         [
@@ -57,9 +65,9 @@ def keyboard():
         resize_keyboard=True,
     )
 
-# =========================
-# USER HELPERS
-# =========================
+# ================================
+# HELPERS
+# ================================
 def get_user(uid):
     uid = str(uid)
     if uid not in db:
@@ -70,49 +78,52 @@ def get_user(uid):
             "running": False,
             "state": None,
             "phone": None,
+            "phone_code_hash": None
         }
     return db[uid]
 
-
 async def get_client(uid):
-    client = TelegramClient(f"{SESSIONS_DIR}/{uid}", API_ID, API_HASH)
-    await client.connect()
-    return client
+    return TelegramClient(f"{SESSIONS_DIR}/{uid}", API_ID, API_HASH)
 
-# =========================
+# ================================
 # ADS LOOP
-# =========================
+# ================================
 async def ads_loop(uid):
     user = get_user(uid)
     client = await get_client(uid)
-    try:
-        while user["running"]:
+    await client.connect()
+
+    while user["running"]:
+        try:
             for chat in user["chats"]:
-                try:
-                    await client.send_message(chat, user["message"])
-                except errors.FloodWaitError as e:
-                    await asyncio.sleep(e.seconds)
-                except Exception:
-                    await asyncio.sleep(5)
+                await client.send_message(chat, user["message"])
             await asyncio.sleep(user["interval"])
-    finally:
-        await client.disconnect()
+        except Exception as e:
+            print("❌ Error in ads_loop:", e)
+            await asyncio.sleep(5)
 
-# =========================
+    await client.disconnect()
+
+# ================================
 # START COMMAND
-# =========================
+# ================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 Bot Ready", reply_markup=keyboard())
+    await update.message.reply_text(
+        "🚀 AdBot Ready",
+        reply_markup=keyboard(),
+    )
 
-# =========================
+# ================================
 # MAIN TEXT HANDLER
-# =========================
+# ================================
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
     uid = update.message.from_user.id
     user = get_user(uid)
 
-    # ===== LOGIN FLOW =====
+    # =========================
+    # LOGIN FLOW
+    # =========================
     if msg == "📱 Login":
         user["state"] = "phone"
         save_data(db)
@@ -123,16 +134,14 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["phone"] = msg
         client = await get_client(uid)
         try:
-            await client.send_code_request(msg)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error sending code: {e}")
-            user["state"] = None
+            sent = await client.send_code_request(msg)
+            user["phone_code_hash"] = sent.phone_code_hash
+            user["state"] = "otp"
             save_data(db)
-            return
-
-        user["state"] = "otp"
-        save_data(db)
-        await update.message.reply_text("Send OTP like: code12345")
+            await update.message.reply_text("Send OTP like:\ncode12345")
+        except errors.PhoneNumberInvalidError:
+            await update.message.reply_text("❌ Invalid phone number")
+            user["state"] = None
         return
 
     if user["state"] == "otp":
@@ -142,23 +151,34 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = msg[4:]
         client = await get_client(uid)
         try:
-            await client.sign_in(user["phone"], code)
+            await client.sign_in(
+                phone=user["phone"],
+                code=code,
+                phone_code_hash=user["phone_code_hash"]
+            )
             user["state"] = None
+            user["phone_code_hash"] = None
             save_data(db)
             await update.message.reply_text("✅ Login successful")
+        except errors.SessionPasswordNeededError:
+            await update.message.reply_text("❌ Two-step verification enabled, please provide password")
         except Exception as e:
             await update.message.reply_text(f"❌ Login failed: {e}")
         return
 
-    # ===== LOGOUT =====
+    # =========================
+    # LOGOUT
+    # =========================
     if msg == "🚪 Logout":
-        session_file = f"{SESSIONS_DIR}/{uid}.session"
-        if os.path.exists(session_file):
-            os.remove(session_file)
+        session = f"{SESSIONS_DIR}/{uid}.session"
+        if os.path.exists(session):
+            os.remove(session)
         await update.message.reply_text("Logged out")
         return
 
-    # ===== SET MESSAGE =====
+    # =========================
+    # SET MESSAGE
+    # =========================
     if msg == "📝 Set Message":
         user["state"] = "set_message"
         await update.message.reply_text("Send your ad message text")
@@ -171,7 +191,9 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Message updated")
         return
 
-    # ===== CHAT MANAGEMENT =====
+    # =========================
+    # CHAT MANAGEMENT
+    # =========================
     if msg == "➕ Add Chat":
         user["state"] = "add_chat"
         await update.message.reply_text("Send chat id or username")
@@ -201,7 +223,9 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Chat removed")
         return
 
-    # ===== INTERVAL =====
+    # =========================
+    # INTERVAL
+    # =========================
     if msg == "⏱ Interval":
         user["state"] = "interval"
         await update.message.reply_text("Send seconds")
@@ -210,20 +234,20 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user["state"] == "interval":
         try:
             user["interval"] = int(msg)
-            user["state"] = None
-            save_data(db)
-            await update.message.reply_text("Interval updated")
-        except ValueError:
-            await update.message.reply_text("Send a valid number")
+        except:
+            await update.message.reply_text("❌ Enter a valid number")
+            return
+        user["state"] = None
+        save_data(db)
+        await update.message.reply_text("Interval updated")
         return
 
-    # ===== ADS =====
+    # =========================
+    # ADS
+    # =========================
     if msg == "▶ Start Ads":
         if not user["chats"]:
             await update.message.reply_text("Add chats first")
-            return
-        if user["running"]:
-            await update.message.reply_text("Ads already running")
             return
         user["running"] = True
         save_data(db)
@@ -237,7 +261,9 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ads stopped")
         return
 
-    # ===== STATUS =====
+    # =========================
+    # STATUS
+    # =========================
     if msg == "📊 Status":
         await update.message.reply_text(
             f"Chats: {len(user['chats'])}\n"
@@ -246,17 +272,15 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Message:\n{user['message']}"
         )
 
-
-# =========================
+# ================================
 # MAIN
-# =========================
+# ================================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, text))
-    print("🚀 Bot running")
+    print("🚀 AdBot running")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
