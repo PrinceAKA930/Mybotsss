@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 python-3.12.0
+=======
+python-3.12.6
+>>>>>>> f90a153 (eveeything)

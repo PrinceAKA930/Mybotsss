@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+<<<<<<< HEAD
 venv/
 .env
 
@@ -12,3 +13,22 @@ sessions/
 
 # OS files
 .DS_Store
+=======
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Sessions and data
+sessions/
+data.json
+.env
+
+# Logs
+*.log
+>>>>>>> f90a153 (eveeything)
